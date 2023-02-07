@@ -1,0 +1,190 @@
+#pragma once
+#include <CL/cl.h>
+#include <iostream>
+#include <string>
+#include <stdio.h>
+using namespace std;
+
+#define LENGTH (5)
+#define CP_MAX_SOURCE_SIZE (0x100000)
+
+struct deviceInfo {
+	cl_bool availability;
+	cl_uint compute_units;
+	char name[1024];
+	cl_ulong global_cache_size;
+	cl_uint global_cacheline_size;
+	cl_ulong global_mem_size;
+	size_t max_workgroup_size;
+	cl_uint max_work_item_dims;
+	size_t max_work_item_sizes[16];
+	deviceInfo(cl_device_id device_id) {
+		cl_int err;
+
+		err = clGetDeviceInfo(device_id, CL_DEVICE_AVAILABLE, sizeof(cl_bool), reinterpret_cast<void*>(&availability), NULL);
+
+		err = clGetDeviceInfo(device_id, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), reinterpret_cast<void*>(&compute_units), NULL);
+
+		err = clGetDeviceInfo(device_id, CL_DEVICE_NAME, 1024, reinterpret_cast<void*>(name), NULL);
+
+		err = clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE, sizeof(cl_ulong), reinterpret_cast<void*>(&global_cache_size), NULL);
+
+		err = clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, sizeof(cl_uint), reinterpret_cast<void*>(&global_cacheline_size), NULL);
+
+		err = clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), reinterpret_cast<void*>(&global_mem_size), NULL);
+
+		err = clGetDeviceInfo(device_id, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), reinterpret_cast<void*>(&max_workgroup_size), NULL);
+
+		err = clGetDeviceInfo(device_id, CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS, sizeof(cl_uint), reinterpret_cast<void*>(&max_work_item_dims), NULL);
+
+		err = clGetDeviceInfo(device_id, CL_DEVICE_MAX_WORK_ITEM_SIZES, sizeof(cl_uint), reinterpret_cast<void*>(max_work_item_sizes), NULL);
+	}
+};
+
+struct workgroupInfo {
+	size_t max_size;
+	size_t pref_size_mult;
+	workgroupInfo(cl_kernel kernel, cl_device_id device_id) {
+		cl_int err;
+
+		err = clGetKernelWorkGroupInfo(kernel, device_id, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), reinterpret_cast<void*>(&max_size), NULL);
+
+		err = clGetKernelWorkGroupInfo(kernel, device_id, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(size_t), reinterpret_cast<void*>(&pref_size_mult), NULL);
+	}
+};
+
+ostream& operator << (ostream& os, const deviceInfo d) {
+	os << "Device availability: " << d.availability << endl;
+	os << "Device compute units: " << d.compute_units << endl;
+	os << "Device name: " << d.name << endl;
+	os << "Device global memory cache size: " << d.global_cache_size << endl;
+	os << "Device global memory cacheline size: " << d.global_cacheline_size << endl;
+	os << "Device global memory size: " << d.global_mem_size << endl;
+	os << "Device max workgroup size: " << d.max_workgroup_size << endl;
+	os << "Device max work item dimensions: " << d.max_work_item_dims << endl;
+	os << "Device max work item sizes: ";
+	int max_dims = d.max_work_item_dims;
+	for (int i = 0; i < max_dims; i++) {
+		os << d.max_work_item_sizes[i] << ", ";
+	}
+	os << endl;
+	return os;
+}
+
+ostream& operator << (ostream& os, const workgroupInfo w) {
+	os << "Workgroup maximum size: " << w.max_size << endl;
+	os << "Workgroup preferred size multiple: " << w.pref_size_mult << endl;
+	return os;
+}
+
+void kernelExample() {
+	cl_device_id gpu_device;
+	cl_int err;
+	cl_platform_id platform_id[10];
+	cl_uint num_devices;
+	cl_uint num_platforms;
+	err = clGetPlatformIDs(2, platform_id, &num_platforms);
+	err = clGetDeviceIDs(platform_id[0], CL_DEVICE_TYPE_GPU, 1, &gpu_device, &num_devices);
+	cout << num_devices << endl;
+
+	cl_device_id other_devices[5];
+	cl_uint num_other_devices;
+	err = clGetDeviceIDs(platform_id[1], CL_DEVICE_TYPE_ALL, 5, other_devices, &num_other_devices);
+	char other_device_name[64];
+	err = clGetDeviceInfo(other_devices[0], CL_DEVICE_NAME, 64, other_device_name, NULL);
+	cout << other_device_name << endl;
+
+	cl_context context = clCreateContext(NULL, 1, &gpu_device, NULL, NULL, &err); // gpu-only context
+
+	cl_command_queue queue_gpu = clCreateCommandQueueWithProperties(context, gpu_device, NULL, &err);
+
+	cout << deviceInfo(gpu_device);
+
+	//clGetDeviceInfo can also be used to obtain 
+	//CL_DEVICE_MAX_COMPUTE_UNITS, CL_DEVICE_MAX_DEVICE_CLOCK_FREQUENCY, CL_DEVICE_GLOBAL_MEM_SIZE, and more
+	//https://www.khronos.org/registry/OpenCL/sdk/1.0/docs/man/xhtml/clGetDeviceInfo.html
+
+	cl_mem A_dev, B_dev, C_dev;
+	A_dev = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(cl_float) * LENGTH, NULL, &err);
+	B_dev = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(cl_float) * LENGTH, NULL, &err);
+	C_dev = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(cl_float) * LENGTH, NULL, &err);
+	cl_event input_cpy[2];
+	float* A_host = new float[] {5.2F, 2.1F, 3.8F, 89.235F, -300.2345F};
+	float* B_host = new float[] {71.21354F, 3.889F, 8.12F, -489.0F, 2.7623F};
+	float* C_host = new float[LENGTH];
+	err = clEnqueueWriteBuffer(queue_gpu, A_dev, false, NULL, sizeof(cl_float) * LENGTH, A_host, 0, NULL, &input_cpy[0]);
+	err = clEnqueueWriteBuffer(queue_gpu, B_dev, false, NULL, sizeof(cl_float) * LENGTH, B_host, 0, NULL, &input_cpy[1]);
+
+	err = clWaitForEvents(2, input_cpy);
+	cout << "Copy to device successful" << endl;
+
+	//Buffer operations include clEnqueue...ReadBuffer, WriteBuffer, CopyBuffer, ... etc. (set blocking = CL_TRUE for synch)
+
+	/*
+	string programString =
+		"kernel void example(global const float* a, "
+		"					 global const float* b, "
+		"					 global float* c) { "
+		"	int i = get_global_id(0); "
+		"	c[i] = a[i] + b[i]; "
+		"}";
+	const char* programChars = programString.c_str();
+	size_t programStringSize = programString.length();*/
+
+	FILE* programFile = fopen("c:\\users\\deegan osmundson\\source\\repos\\engine\\Engine One (OpenCL)\\ShaderKernels.cl", "r");
+	char* programUnstableChars = new char[CP_MAX_SOURCE_SIZE];
+	size_t programStringSize = fread(programUnstableChars, 1, CP_MAX_SOURCE_SIZE, programFile);
+	string programString = string(programUnstableChars);
+	const char* programChars = programString.c_str();
+
+	fclose(programFile);
+
+	cl_program program = clCreateProgramWithSource(context, 1, &programChars, &programStringSize, &err);
+
+	delete[] programUnstableChars;
+
+	err = clBuildProgram(program, 1, &gpu_device, NULL, NULL, NULL);
+
+	if (err) {
+		char log[1024] = "";
+		err = clGetProgramBuildInfo(program, gpu_device, CL_PROGRAM_BUILD_LOG, sizeof(log), log, NULL);
+		printf("Program build log:\n%s\n", log);
+	}
+
+	cl_kernel kernel1 = clCreateKernel(program, "example", &err);
+	err = clSetKernelArg(kernel1, 0, sizeof(&A_dev), &A_dev);
+	err = clSetKernelArg(kernel1, 1, sizeof(&B_dev), &B_dev);
+	err = clSetKernelArg(kernel1, 2, sizeof(&C_dev), &C_dev);
+	//...
+
+	cout << workgroupInfo(kernel1, gpu_device);
+
+	size_t globalWorkSize[1] = { 200 };
+	size_t localWorkSize[1] = { 1 };
+	cl_event kexecuted;
+	err = clEnqueueNDRangeKernel(queue_gpu, kernel1, 1, NULL, globalWorkSize, NULL, 2, input_cpy, &kexecuted);
+
+	cl_event ccpy;
+	err = clEnqueueReadBuffer(queue_gpu, C_dev, false, 0, sizeof(float) * LENGTH, C_host, 1, &kexecuted, &ccpy);
+	err = clWaitForEvents(1, &ccpy);
+	for (int i = 0; i < LENGTH; i++) {
+		cout << C_host[i] << ", ";
+	}
+	cout << endl;
+
+	err = clFlush(queue_gpu);
+	err = clFinish(queue_gpu);
+	err = clReleaseKernel(kernel1);
+	err = clReleaseProgram(program);
+	err = clReleaseMemObject(A_dev);
+	err = clReleaseMemObject(B_dev);
+	err = clReleaseMemObject(C_dev);
+	err = clReleaseCommandQueue(queue_gpu);
+	err = clReleaseContext(context);
+	delete[] A_host;
+	delete[] B_host;
+	delete[] C_host;
+
+	char pause;
+	cin >> pause;
+}
